@@ -9,15 +9,44 @@ plugins {
 }
 
 allprojects {
-    apply(plugin = "maven-publish")
     group = "cc.polyfrost"
-    version = "1.0.0-beta14"
+    version = "1.0.0-beta15"
+}
+
+subprojects {
+    if (!project.hasProperty("oneconfig.java")) return@subprojects
+    val shade = setupJavaProject()
+
+    val loader = (project.findProperty("oneconfig.loader") ?: return@subprojects) as String
+    if (loader == "launchwrapper") setupLaunchwrapperProject(shade)
+}
+
+fun Project.setupJavaProject(): Configuration {
+    apply(plugin = "java")
+    apply(plugin = "idea")
+    apply(plugin = "maven-publish")
+
+    val shade: Configuration by configurations.creating {
+        configurations.named(JavaPlugin.COMPILE_CLASSPATH_CONFIGURATION_NAME).get().extendsFrom(this)
+        configurations.named(JavaPlugin.RUNTIME_CLASSPATH_CONFIGURATION_NAME).get().extendsFrom(this)
+    }
+
+    configure<JavaPluginExtension> {
+        withSourcesJar()
+        toolchain.languageVersion.set(JavaLanguageVersion.of(8))
+    }
+
+    tasks.withType(JavaCompile::class) {
+        options.encoding = "UTF-8"
+    }
+
     repositories {
         mavenCentral()
     }
 
     configure<PublishingExtension> {
         repositories {
+            mavenLocal()
             maven {
                 name = "releases"
                 setUrl("https://repo.polyfrost.cc/releases")
@@ -45,79 +74,53 @@ allprojects {
         }
     }
 
+    return shade
 }
 
-subprojects {
-    apply(plugin = "java")
-    apply(plugin = "idea")
+fun Project.setupLaunchwrapperProject(shade: Configuration) {
+    println("setting up launchwrapper project for ${project.name}")
+
+    apply(plugin = "gg.essential.loom")
     apply(plugin = "com.github.johnrengelman.shadow")
-    val common = project.name.contains("common")
-    val loader = project.name.contains("loader")
-    if (!common) {
-        apply(plugin = "gg.essential.loom")
-    }
 
-    val shade: Configuration by configurations.creating {
-        configurations.named(JavaPlugin.COMPILE_CLASSPATH_CONFIGURATION_NAME).get().extendsFrom(this)
-        configurations.named(JavaPlugin.RUNTIME_CLASSPATH_CONFIGURATION_NAME).get().extendsFrom(this)
-    }
-
-    configure<JavaPluginExtension> {
-        withSourcesJar()
-        toolchain.languageVersion.set(JavaLanguageVersion.of(8))
-    }
-
-    if (!common) {
-        configure<LoomGradleExtensionAPI> {
-            forge {
-                pack200Provider.set(dev.architectury.pack200.java.Pack200Adapter())
+    configure<LoomGradleExtensionAPI> {
+        runConfigs {
+            "client" {
+                programArgs("--tweakClass", "cc.polyfrost.oneconfig.loader.stage0.LaunchWrapperTweaker")
             }
         }
 
-        dependencies {
-            "minecraft"("com.mojang:minecraft:1.8.9")
-            "mappings"("de.oceanlabs.mcp:mcp_stable:22-1.8.9")
-            "forge"("net.minecraftforge:forge:1.8.9-11.15.1.2318-1.8.9")
-            shade(project(":oneconfig-common"))
+        forge {
+            pack200Provider.set(dev.architectury.pack200.java.Pack200Adapter())
         }
     }
 
-    if (loader) {
-        dependencies {
-            if (common) {
-                "compileOnly"(project(":oneconfig-common"))
-            } else {
-                shade(project(":oneconfig-common-loader"))
+    dependencies {
+        "minecraft"("com.mojang:minecraft:1.8.9")
+        "mappings"("de.oceanlabs.mcp:mcp_stable:22-1.8.9")
+        "forge"("net.minecraftforge:forge:1.8.9-11.15.1.2318-1.8.9")
+    }
+
+    tasks {
+        withType(Jar::class) {
+            archiveBaseName.set(project.name)
+        }
+        val shadowJar by named<ShadowJar>("shadowJar") {
+            archiveClassifier.set("dev")
+            configurations = listOf(shade)
+            duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+            if (project.name.contains("loader")) {
+                relocate("cc.polyfrost.oneconfig.loader.stage0", "cc.polyfrost.oneconfig.loader")
             }
         }
-    }
-
-    tasks.withType(JavaCompile::class) {
-        options.encoding = "UTF-8"
-    }
-
-    if (!common) {
-        tasks {
-            withType(Jar::class) {
-                archiveBaseName.set(project.name)
-            }
-            val shadowJar by named<ShadowJar>("shadowJar") {
-                archiveClassifier.set("dev")
-                configurations = listOf(shade)
-                duplicatesStrategy = DuplicatesStrategy.EXCLUDE
-                if (loader) {
-                    relocate("cc.polyfrost.oneconfig.loader.stage0", "cc.polyfrost.oneconfig.loader")
-                }
-            }
-            named<RemapJarTask>("remapJar") {
-                inputFile.set(shadowJar.archiveFile)
-                archiveClassifier.set("")
-            }
-            named<Jar>("jar") {
-                dependsOn(shadowJar)
-                archiveClassifier.set("")
-                enabled = false
-            }
+        named<RemapJarTask>("remapJar") {
+            inputFile.set(shadowJar.archiveFile)
+            archiveClassifier.set("")
+        }
+        named<Jar>("jar") {
+            dependsOn(shadowJar)
+            archiveClassifier.set("")
+            enabled = false
         }
     }
 }

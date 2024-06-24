@@ -1,14 +1,10 @@
-loom {
-    runConfigs {
-        "client" {
-            programArgs("--tweakClass", "cc.polyfrost.oneconfig.loader.stage0.LaunchWrapperTweaker")
-        }
-    }
+dependencies {
+    shade(project(":oneconfig-loader-common"))
 }
 
 publishing {
     publications {
-        create<MavenPublication>("wrapper") {
+        create<MavenPublication>("loader") {
             artifactId = project.name
             group = project.group
             version = project.version.toString()
@@ -21,4 +17,3 @@ publishing {
         }
     }
 }
-
